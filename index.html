@@ -213,16 +213,25 @@ function showRank(){
   document.getElementById('apiInput').value = API;
   var box = document.getElementById('rankList');
   box.innerHTML = '<div class="rank-empty">加载中…</div>';
-  if(API){
-    try {
-      fetch(API + '/api/leaderboard').then(function(r){ return r.json(); }).then(function(j){
-        if(j && j.ok && j.list) renderRank(j.list, true);
-        else renderRank(getLocalRank(), false);
-      }).catch(function(){ renderRank(getLocalRank(), false); });
-    } catch(e){ renderRank(getLocalRank(), false); }
-  } else {
-    renderRank(getLocalRank(), false);
+  // 数据源优先级：GitHub Pages同步文件(国内稳定) → Cloudflare API(实时) → 本机
+  function tryCloud(){
+    if(API){
+      try {
+        fetch(API + '/api/leaderboard').then(function(r){ return r.json(); }).then(function(j){
+          if(j && j.ok && j.list) renderRank(j.list, true);
+          else renderRank(getLocalRank(), false);
+        }).catch(function(){ renderRank(getLocalRank(), false); });
+      } catch(e){ renderRank(getLocalRank(), false); }
+    } else {
+      renderRank(getLocalRank(), false);
+    }
   }
+  try {
+    fetch('leaderboard.json?v=' + Date.now()).then(function(r){ return r.json(); }).then(function(j){
+      if(j && j.ok && j.list && j.list.length) renderRank(j.list, 'pages');
+      else tryCloud();
+    }).catch(tryCloud);
+  } catch(e){ tryCloud(); }
 }
 function getLocalRank(){
   try { var l = JSON.parse(store.get('leader2048')||'[]'); return (l instanceof Array) ? l : []; } catch(e){ return []; }
@@ -237,7 +246,7 @@ function renderRank(list, isServer){
     }
   }
   document.getElementById('rankList').innerHTML = html;
-  document.getElementById('rankTag').textContent = isServer ? '🌐 全服排行' : '📱 本机排行';
+  document.getElementById('rankTag').textContent = (isServer === 'pages') ? '🌐 全服排行(约5分钟同步)' : (isServer ? '🌐 全服排行' : '📱 本机排行');
 }
 function saveApi(){
   var v = document.getElementById('apiInput').value.trim();
