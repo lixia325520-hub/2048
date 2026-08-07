@@ -203,7 +203,20 @@ function saveScore(){
     store.set('leader2048', JSON.stringify(list));
     if(API){
       try {
-        fetch(API + '/api/score', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:playerName, score:score})}).then(function(r){ return r.json(); }).then(function(j){ if(j && j.ok && j.list && j.list.length){ var l2 = j.list.slice(); for(var i2=0;i2<l2.length;i2++){ if(l2[i2].n===playerName && l2[i2].s===score){ l2[i2]._me = true; l2[i2].t = '刚刚'; break; } } if(document.getElementById('rankModal').classList.contains('show')) renderRank(l2, true); } }).catch(function(){});
+        var JB = 'https://jsonblob.com/api/jsonBlob/019fdd2f-69fb-7dc6-9e80-84e852bdc4b1';
+        var _d = new Date(), _ts = (_d.getMonth()+1<10?'0':'')+(_d.getMonth()+1)+'/'+(_d.getDate()<10?'0':'')+_d.getDate()+' '+(_d.getHours()<10?'0':'')+_d.getHours()+':'+(_d.getMinutes()<10?'0':'')+_d.getMinutes();
+        fetch(JB).then(function(r){ return r.json(); }).then(function(b){
+          if(!b || !(b.queue instanceof Array)) throw 0;
+          b.queue.push({n:playerName, s:score, t:_ts});
+          if(b.queue.length > 200) b.queue = b.queue.slice(-200);
+          return fetch(JB, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)});
+        }).then(function(r){
+          if(r && r.ok){ try{ var _t=document.createElement('div'); _t.style.cssText='position:fixed;left:50%;top:15%;transform:translateX(-50%);background:rgba(0,0,0,.78);color:#fff;padding:10px 18px;border-radius:8px;z-index:9999;font-size:14px;letter-spacing:.5px'; _t.textContent='✓ 分数已提交，全服榜1分钟内更新'; document.body.appendChild(_t); setTimeout(function(){ _t.remove(); }, 2500); }catch(e){} return; }
+          throw 0;
+        }).catch(function(){
+          try {
+            fetch(API + '/api/score', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:playerName, score:score})}).then(function(r){ return r.json(); }).then(function(j){ if(j && j.ok && j.list && j.list.length){ var l2 = j.list.slice(); for(var i2=0;i2<l2.length;i2++){ if(l2[i2].n===playerName && l2[i2].s===score){ l2[i2]._me = true; l2[i2].t = '刚刚'; break; } } if(document.getElementById('rankModal').classList.contains('show')) renderRank(l2, true); } }).catch(function(){}); } catch(e){}
+        });
       } catch(e){}
     }
   } catch(e){}
