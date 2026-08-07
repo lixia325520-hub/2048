@@ -203,7 +203,7 @@ function saveScore(){
     store.set('leader2048', JSON.stringify(list));
     if(API){
       try {
-        fetch(API + '/api/score', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:playerName, score:score})});
+        fetch(API + '/api/score', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:playerName, score:score})}).then(function(r){ return r.json(); }).then(function(j){ if(j && j.ok && j.list && j.list.length){ var l2 = j.list.slice(); for(var i2=0;i2<l2.length;i2++){ if(l2[i2].n===playerName && l2[i2].s===score){ l2[i2]._me = true; l2[i2].t = '刚刚'; break; } } if(document.getElementById('rankModal').classList.contains('show')) renderRank(l2, true); } }).catch(function(){});
       } catch(e){}
     }
   } catch(e){}
@@ -227,12 +227,13 @@ function showRank(){
 function getLocalRank(){
   try { var l = JSON.parse(store.get('leader2048')||'[]'); return (l instanceof Array) ? l : []; } catch(e){ return []; }
 }
+function fmtT(t){ if(typeof t === 'number'){ var d = new Date(t); var mm=d.getMonth()+1,dd=d.getDate(),hh=d.getHours(),mi=d.getMinutes(); return (mm<10?'0':'')+mm+'/'+(dd<10?'0':'')+dd+' '+(hh<10?'0':'')+hh+':'+(mi<10?'0':'')+mi; } return t || ''; }
 function renderRank(list, isServer){
   var html = '';
   if(!list || !list.length){ html = '<div class="rank-empty">暂无记录，快来创造神话吧~</div>'; }
   else {
     for(var i=0;i<list.length;i++){
-      html += '<div class="rank-row"><span class="rank-no">'+(i+1)+'</span><span class="rank-name">'+list[i].n+'</span><span class="rank-score">'+list[i].s+'</span><span class="rank-time">'+(list[i].t||'')+'</span></div>';
+      html += '<div class="rank-row"'+(list[i]._me?' style="background:rgba(255,215,0,.15);border-radius:6px"':'')+'><span class="rank-no">'+(i+1)+'</span><span class="rank-name">'+list[i].n+(list[i]._me?' ★':'')+'</span><span class="rank-score">'+list[i].s+'</span><span class="rank-time">'+fmtT(list[i].t)+'</span></div>';
     }
   }
   document.getElementById('rankList').innerHTML = html;
