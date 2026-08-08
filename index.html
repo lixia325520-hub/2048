@@ -34,7 +34,7 @@
   .t128{background:#edcf72;color:#fff}.t256{background:#edcc61;color:#fff}
   .t512{background:#edc850;color:#fff}.t1024{background:#edc53f;color:#fff}
   .t2048{background:#edc22e;color:#fff;box-shadow:0 0 22px rgba(237,194,46,.85)}
-  .t4096{background:#3c3a32;color:#fff}
+  .t4096{background:#3c3a32;color:#fff}.t8192{background:#2b2a39;color:#ffd700;box-shadow:0 0 22px rgba(255,215,0,.65)}.t16384{background:#1a1830;color:#fff;box-shadow:0 0 28px rgba(255,85,85,.7)}
   .overlay { position:absolute; inset:0; background:rgba(0,0,0,.6); border-radius:12px; display:none; align-items:center; justify-content:center; flex-direction:column; gap:14px; color:#fff; z-index:10; text-align:center; }
   .overlay.show{display:flex}
   .overlay h2{font-size:26px; text-shadow:0 2px 6px #000; padding:0 12px;}
@@ -107,7 +107,7 @@ function buildBoard(){
   for(var i=0;i<size*size;i++){ var d=document.createElement('div'); d.className='cell'; grid.appendChild(d); cells.push(d); }
   document.getElementById('best').textContent = best;
   var n = document.getElementById('nameInput');
-  if(playerName){ n.value = playerName; n.placeholder = '上次的名字：' + playerName; }
+  if(playerName){ n.value = playerName; n.placeholder = '上次愜惟：' + playerName; }
   document.getElementById('nameModal').classList.add('show');
 }
 function startWithName(){
@@ -158,7 +158,7 @@ function move(dir){
       var r2,c2;
       if(dir===0){r2=i;c2=j2;} else if(dir===1){r2=j2;c2=i;}
       else if(dir===2){r2=i;c2=size-1-j2;} else {r2=size-1-j2;c2=i;}
-      if(board[r2][c2] !== merged[j2]) moved = true;
+      if(board[r][c2] !== merged[j2]) moved = true;
       board[r2][c2] = merged[j2];
     }
   }
@@ -179,13 +179,13 @@ function check(){
     if(c+1<size && board[r][c+1]===v) canMove = true;
     if(r+1<size && board[r+1][c]===v) canMove = true;
   }
-  if(c2048 >= 2 || c4096 >= 1){ saveScore(); showOverlay('🎉 不可以！不可以！我不行了，你赢了！', true); }
+  if(c2048 >= 1 || c4096 >= 1){ saveScore(); showOverlay('🎉 不可以！不可以！我不行了，你赢了！', true); }
   else if(!canMove){ saveScore(); showOverlay('💀 ' + failMsg(score), true); }
 }
 function failMsg(s){
   if(s <= 2000) return '杂鱼杂鱼';
   if(s <= 5000) return '杂鱼不行啊';
-  if(s <= 7000) return '加把劲呢杂鱼酱';
+  if(s <= 7000) return '加劲呢杂鱼酱�;
   if(s <= 10000) return '加把劲呢杂鱼酱';
   return '不行了，你赢了';
 }
@@ -196,36 +196,55 @@ function saveScore(){
     if(!(list instanceof Array)) list = [];
     var d = new Date();
     var mm = d.getMonth()+1, dd = d.getDate(), hh = d.getHours(), mi = d.getMinutes();
-    list.push({n:playerName, s:score, t:(mm<10?'0':'')+mm+'/'+(dd<10?'0':'')+dd+' '+(hh<10?'0':'')+hh+':'+(mi<10?'0':'')+mi});
+    var newEntry = {n:playerName, s:score, t:(mm<10?'0':'')+mm+'/'+(dd<10?'0':'')+dd+' '+(hh<10?'0':'')+hh+':'+(mi<10?'0':'')+mi};
+    // 去重：同名玩家只还留最高分
+    var exist = -1;
+    for(var i=0;i<list.length;i++){ if(list[i].n===playerName){ exist=i; break; } }
+    if(exist>=0){ if(score>list[exist].s) list[exist]=newEntry; }
+    else list.push(newEntry);
     list.sort(function(a,b){ return b.s - a.s; });
     if(list.length > 10) list = list.slice(0,10);
     store.set('leader2048', JSON.stringify(list));
     if(API){
       try {
         fetch(API + '/api/score', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:playerName, score:score})});
-      } catch(e){}
+      } catch(e){ console.warn('API score push failed:', e); }
     }
-  } catch(e){}
+  } catch(e){ console.warn('saveScore failed:', e); alert('存储空间不足或数据异常，排行榜无法保存；请清理浏览器存储后重试。'); }
 }
 function showRank(){
   document.getElementById('rankModal').classList.add('show');
   document.getElementById('apiInput').value = API;
   var box = document.getElementById('rankList');
-  renderRank(getLocalRank(), false);
+  var local = getLocalRank();
+  renderRank(local, false);
   var ub = 'https://lixia325520-hub.github.io/2048/leaderboard.json?x=' + Date.now();
+  function mergeAndRender(remoteList){
+    if(!remoteList || !remoteList.length || !local.length){ renderRank(remoteList||local, true); return; }
+    var map = {}, merged = [];
+    for(var i=0;i<remoteList.length;i++){ map[remoteList[i].n]=remoteList[i]; merged.push(remoteList[i]); }
+    for(var j=0;j<local.length;j++){
+      var ln = local[j].n;
+      if(!map[ln]) merged.push(local[j]);
+      else if(local[j].s > map[ln].s){ merged.splice(merged.indexOf(map[ln]), 1, local[j]); map[ln]=local[j]; }
+    }
+    merged.sort(function(a,b){ return b.s - a.s; });
+    if(merged.length > 10) merged = merged.slice(0,10);
+    renderRank(merged, true);
+  }
   try {
     var ctrl = new AbortController(), t = setTimeout(function(){ ctrl.abort(); }, 4000);
     fetch(ub, {signal:ctrl.signal}).then(function(r){ return r.json(); }).then(function(j){
       clearTimeout(t);
-      if(j && j.ok && j.list) renderRank(j.list, true);
-    }).catch(function(){ try{ clearTimeout(t); }catch(e){} });
+      if(j && j.ok && j.list) mergeAndRender(j.list);
+    }).catch(function(e){ try{ clearTimeout(t); }catch(e){} console.warn('GitHub leaderboard fetch failed:', e); });
   } catch(e){}
   if(API){
     try {
       fetch(API + '/api/leaderboard').then(function(r){ return r.json(); }).then(function(j){
-        if(j && j.ok && j.list) renderRank(j.list, true);
-      }).catch(function(){});
-    } catch(e){}
+        if(j && j.ok && j.list) mergeAndRender(j.list);
+      }).catch(function(err){ console.warn('Custom API leaderboard fetch failed:', err); });
+    } catch(e){ console.warn('Custom API leaderboard error:', e); }
   }
 }
 function getLocalRank(){
