@@ -88,8 +88,8 @@ html,body{overflow:hidden;height:100%;overscroll-behavior:none;touch-action:none
   <div class="modal-box">
     <h2>🏆 排行榜 <span id="rankTag" style="font-size:12px;opacity:.75"></span></h2>
     <div class="rank-list" id="rankList"></div>
-    <input id="apiInput" placeholder="服务器地址，如 http://192.168.1.5:8081" style="margin-bottom:8px">
-    <button class="btn" onclick="saveApi()">保存服务器地址</button>
+    <input id="apiInput" placeholder="GitHub Token (ghp_xxx) —— 填一次永久生效" style="margin-bottom:8px">
+    <button class="btn" onclick="saveApi()">💾 保存 Token</button>
     <button class="btn" onclick="closeRank()" style="margin-top:8px">关闭</button>
   </div>
 </div>
@@ -100,8 +100,9 @@ var store = {
 };
 var size = 4, board = [], score = 0, best = parseInt(store.get('best2048')||'0', 10) || 0;
 var playerName = store.get('playerName') || '';
-var API = store.get('api2048') || '';
-if(!API && location.hostname && location.hostname !== 'localhost'){ API = location.protocol + '//' + location.hostname; }
+// === 全服排行榜：直接读写 GitHub API（首次需在排行弹窗填 token）===
+var GITHUB_API = 'https://api.github.com/repos/lixia325520-hub/2048/contents/leaderboard.json';
+var GH_TOKEN = store.get('ghToken2048') || '';
 var grid = document.getElementById('grid'), cells = [];
 function buildBoard(){
   for(var i=0;i<size*size;i++){ var d=document.createElement('div'); d.className='cell'; grid.appendChild(d); cells.push(d); }
@@ -197,64 +198,102 @@ function saveScore(){
     var d = new Date();
     var mm = d.getMonth()+1, dd = d.getDate(), hh = d.getHours(), mi = d.getMinutes();
     var newEntry = {n:playerName, s:score, t:(mm<10?'0':'')+mm+'/'+(dd<10?'0':'')+dd+' '+(hh<10?'0':'')+hh+':'+(mi<10?'0':'')+mi};
-    // 去重：同名玩家只还留最高分
     var exist = -1;
     for(var i=0;i<list.length;i++){ if(list[i].n===playerName){ exist=i; break; } }
     if(exist>=0){ if(score>list[exist].s) list[exist]=newEntry; }
     else list.push(newEntry);
     list.sort(function(a,b){ return b.s - a.s; });
-    if(list.length > 10) list = list.slice(0,10);
+    if(list.length > 50) list = list.slice(0,50);
     store.set('leader2048', JSON.stringify(list));
-    if(API){
-      try {
-        fetch(API + '/api/score', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:playerName, score:score})});
-      } catch(e){ console.warn('API score push failed:', e); }
-    }
-  } catch(e){ console.warn('saveScore failed:', e); alert('存储空间不足或数据异常，排行榜无法保存；请清理浏览器存储后重试。'); }
+    // 全服同步：写入 GitHub
+    syncToGitHub();
+  } catch(e){ console.warn('saveScore failed:', e); }
 }
 function showRank(){
   document.getElementById('rankModal').classList.add('show');
-  document.getElementById('apiInput').value = API;
+  document.getElementById('apiInput').value = GH_TOKEN;
   var box = document.getElementById('rankList');
   var local = getLocalRank();
-  renderRank(local, false);
-  var ub = 'https://lixia325520-hub.github.io/2048/leaderboard.json?x=' + Date.now();
-  function mergeAndRender(remoteList){
-    if(!remoteList || !remoteList.length || !local.length){ renderRank(remoteList||local, true); return; }
-    var map = {}, merged = [];
-    for(var i=0;i<remoteList.length;i++){ map[remoteList[i].n]=remoteList[i]; merged.push(remoteList[i]); }
-    for(var j=0;j<local.length;j++){
-      var ln = local[j].n;
-      if(!map[ln]) merged.push(local[j]);
-      else if(local[j].s > map[ln].s){ merged.splice(merged.indexOf(map[ln]), 1, local[j]); map[ln]=local[j]; }
-    }
-    merged.sort(function(a,b){ return b.s - a.s; });
-    if(merged.length > 10) merged = merged.slice(0,10);
-    renderRank(merged, true);
-  }
-  try {
-    var ctrl = new AbortController(), t = setTimeout(function(){ ctrl.abort(); }, 4000);
-    fetch(ub, {signal:ctrl.signal}).then(function(r){ return r.json(); }).then(function(j){
-      clearTimeout(t);
-      if(j && j.ok && j.list) mergeAndRender(j.list);
-    }).catch(function(e){ try{ clearTimeout(t); }catch(e){} console.warn('GitHub leaderboard fetch failed:', e); });
-  } catch(e){}
-  if(API){
-    try {
-      fetch(API + '/api/leaderboard').then(function(r){ return r.json(); }).then(function(j){
-        if(j && j.ok && j.list) mergeAndRender(j.list);
-      }).catch(function(err){ console.warn('Custom API leaderboard fetch failed:', err); });
-    } catch(e){ console.warn('Custom API leaderboard error:', e); }
-  }
+  renderRank(local, false, null);
+  if(!GH_TOKEN){ renderRank(local, true, null); return; } // 无token只显示本地
+  fetch(GITHUB_API, {headers:{'Authorization':'Bearer '+GH_TOKEN,'Accept':'application/vnd.github.v3+json'}})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if(j && j.content){
+        var list = JSON.parse(atob(j.content.replace(/\s/g,'')));
+        if(list && list.ok && list.list){
+          // 合并本地最高分
+          var merged = mergeWithLocal(list.list);
+          renderRank(merged, true, j.sha);
+        }
+      }
+    }).catch(function(e){ console.warn('GitHub fetch failed:', e); renderRank(local, true, null); });
 }
 function getLocalRank(){
   try { var l = JSON.parse(store.get('leader2048')||'[]'); return (l instanceof Array) ? l : []; } catch(e){ return []; }
+}
+function mergeWithLocal(remoteList){
+  var map = {}, merged = [];
+  for(var i=0;i<remoteList.length;i++){ map[remoteList[i].n]=remoteList[i]; merged.push(remoteList[i]); }
+  var local = getLocalRank();
+  for(var j=0;j<local.length;j++){
+    var ln = local[j].n;
+    if(!map[ln]) merged.push(local[j]);
+    else if(local[j].s > map[ln].s){ var idx = merged.indexOf(map[ln]); if(idx>=0) merged[idx]=local[j]; map[ln]=local[j]; }
+  }
+  merged.sort(function(a,b){ return b.s - a.s; });
+  return merged;
+}
+// 全服同步：合并本地分数写入 GitHub leaderboard.json
+function syncToGitHub(){
+  var localList = getLocalRank();
+  if(!localList.length || !GH_TOKEN) return;
+  fetch(GITHUB_API, {headers:{'Authorization':'Bearer '+GH_TOKEN,'Accept':'application/vnd.github.v3+json'}})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      var remoteList = [], sha = '';
+      if(j && j.content){
+        try {
+          var data = JSON.parse(atob(j.content.replace(/\s/g,'')));
+          if(data && data.list) remoteList = data.list;
+          sha = j.sha;
+        } catch(e){ console.warn('parse remote leaderboard failed:', e); }
+      }
+      // 合并
+      var map = {}, merged = [];
+      for(var i=0;i<remoteList.length;i++){ map[remoteList[i].n]=remoteList[i]; merged.push(remoteList[i]); }
+      for(var k=0;k<localList.length;k++){
+        var ln = localList[k].n;
+        if(!map[ln]) merged.push(localList[k]);
+        else if(localList[k].s > map[ln].s){ var idx = merged.indexOf(map[ln]); if(idx>=0) merged[idx]=localList[k]; map[ln]=localList[k]; }
+      }
+      merged.sort(function(a,b){ return b.s - a.s; });
+      if(merged.length > 50) merged = merged.slice(0,50);
+      var payload = {ok:true, list:merged, syncedAt:Date.now()};
+      var content = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+      var body = {message:'📊 '+playerName+' - '+score+'分', content:content, sha:sha};
+      // 写回
+      return fetch(GITHUB_API, {
+        method:'PUT',
+        headers:{'Authorization':'Bearer '+GH_TOKEN,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'},
+        body:JSON.stringify(body)
+      });
+    }).then(function(r2){ if(r2) return r2.json(); })
+    .then(function(result){
+      if(result && result.content){
+        // 更新本地缓存
+        try {
+          var newData = JSON.parse(atob(result.content.sha ? '' : (result.content.replace ? result.content.replace(/\s/g,'') : '')));
+          if(newData && newData.list) store.set('leader2048', JSON.stringify(newData.list.slice(0,10)));
+        } catch(e){}
+      }
+    }).catch(function(e){ console.warn('syncToGitHub failed:', e); });
 }
 function escapeHtml(str){
   if(!str) return '';
   return String(str).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"').replace(/'/g,'&#39;');
 }
-function renderRank(list, isServer){
+function renderRank(list, isServer, sha){
   var html = '';
   if(!list || !list.length){ html = '<div class="rank-empty">暂无记录，快来创造神话吧~</div>'; }
   else {
@@ -263,12 +302,12 @@ function renderRank(list, isServer){
     }
   }
   document.getElementById('rankList').innerHTML = html;
-  document.getElementById('rankTag').textContent = isServer ? '🌐 全服排行' : '📱 本机排行';
+  document.getElementById('rankTag').textContent = isServer ? '🌐 全服排行 (实时)' : '📱 本机排行';
 }
 function saveApi(){
   var v = document.getElementById('apiInput').value.trim();
-  if(v){ store.set('api2048', v); API = v; }
-  else { store.set('api2048', ''); API = location.hostname ? location.protocol + '//' + location.hostname + ':8081' : ''; }
+  if(v){ store.set('ghToken2048', v); GH_TOKEN = v; }
+  else { store.remove('ghToken2048'); GH_TOKEN = ''; }
   showRank();
 }
 function closeRank(){ document.getElementById('rankModal').classList.remove('show'); }
