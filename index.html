@@ -88,8 +88,6 @@ html,body{overflow:hidden;height:100%;overscroll-behavior:none;touch-action:none
   <div class="modal-box">
     <h2>🏆 排行榜 <span id="rankTag" style="font-size:12px;opacity:.75"></span></h2>
     <div class="rank-list" id="rankList"></div>
-    <input id="apiInput" placeholder="GitHub Token (ghp_xxx) —— 填一次永久生效" style="margin-bottom:8px">
-    <button class="btn" onclick="saveApi()">💾 保存 Token</button>
     <button class="btn" onclick="closeRank()" style="margin-top:8px">关闭</button>
   </div>
 </div>
@@ -101,8 +99,8 @@ var store = {
 var size = 4, board = [], score = 0, best = parseInt(store.get('best2048')||'0', 10) || 0;
 var playerName = store.get('playerName') || '';
 // === 全服排行榜：直接读写 GitHub API（首次需在排行弹窗填 token）===
-var GITHUB_API = 'https://api.github.com/repos/lixia325520-hub/2048/contents/leaderboard.json';
-var GH_TOKEN = store.get('ghToken2048') || '';
+// GITHUB_API removed - using backend API endpoint
+// var GH_TOKEN removed - backend API now handles auth
 var grid = document.getElementById('grid'), cells = [];
 function buildBoard(){
   for(var i=0;i<size*size;i++){ var d=document.createElement('div'); d.className='cell'; grid.appendChild(d); cells.push(d); }
@@ -211,23 +209,19 @@ function saveScore(){
 }
 function showRank(){
   document.getElementById('rankModal').classList.add('show');
-  document.getElementById('apiInput').value = GH_TOKEN;
-  var box = document.getElementById('rankList');
   var local = getLocalRank();
   renderRank(local, false, null);
-  if(!GH_TOKEN){ renderRank(local, true, null); return; } // 无token只显示本地
-  fetch(GITHUB_API, {headers:{'Authorization':'Bearer '+GH_TOKEN,'Accept':'application/vnd.github.v3+json'}})
+  // 从后端 API 获取全服排行榜（无需 Token）
+  fetch('/api/leaderboard')
     .then(function(r){ return r.json(); })
     .then(function(j){
-      if(j && j.content){
-        var list = JSON.parse(atob(j.content.replace(/\s/g,'')));
-        if(list && list.ok && list.list){
-          // 合并本地最高分
-          var merged = mergeWithLocal(list.list);
-          renderRank(merged, true, j.sha);
-        }
+      if(j && j.ok && j.list){
+        var merged = mergeWithLocal(j.list);
+        renderRank(merged, true, null);
+      } else {
+        renderRank(local, true, null);
       }
-    }).catch(function(e){ console.warn('GitHub fetch failed:', e); renderRank(local, true, null); });
+    }).catch(function(e){ console.warn('API fetch failed:', e); renderRank(local, true, null); });
 }
 function getLocalRank(){
   try { var l = JSON.parse(store.get('leader2048')||'[]'); return (l instanceof Array) ? l : []; } catch(e){ return []; }
@@ -246,46 +240,17 @@ function mergeWithLocal(remoteList){
 }
 // 全服同步：合并本地分数写入 GitHub leaderboard.json
 function syncToGitHub(){
-  var localList = getLocalRank();
-  if(!localList.length || !GH_TOKEN) return;
-  fetch(GITHUB_API, {headers:{'Authorization':'Bearer '+GH_TOKEN,'Accept':'application/vnd.github.v3+json'}})
+  if(!playerName) return;
+  // 通过后端 API 提交分数（后端使用服务器 Token 写 GitHub，安全可靠）
+  fetch('/api/score', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: playerName, score: score })
+  })
     .then(function(r){ return r.json(); })
     .then(function(j){
-      var remoteList = [], sha = '';
-      if(j && j.content){
-        try {
-          var data = JSON.parse(atob(j.content.replace(/\s/g,'')));
-          if(data && data.list) remoteList = data.list;
-          sha = j.sha;
-        } catch(e){ console.warn('parse remote leaderboard failed:', e); }
-      }
-      // 合并
-      var map = {}, merged = [];
-      for(var i=0;i<remoteList.length;i++){ map[remoteList[i].n]=remoteList[i]; merged.push(remoteList[i]); }
-      for(var k=0;k<localList.length;k++){
-        var ln = localList[k].n;
-        if(!map[ln]) merged.push(localList[k]);
-        else if(localList[k].s > map[ln].s){ var idx = merged.indexOf(map[ln]); if(idx>=0) merged[idx]=localList[k]; map[ln]=localList[k]; }
-      }
-      merged.sort(function(a,b){ return b.s - a.s; });
-      if(merged.length > 50) merged = merged.slice(0,50);
-      var payload = {ok:true, list:merged, syncedAt:Date.now()};
-      var content = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-      var body = {message:'📊 '+playerName+' - '+score+'分', content:content, sha:sha};
-      // 写回
-      return fetch(GITHUB_API, {
-        method:'PUT',
-        headers:{'Authorization':'Bearer '+GH_TOKEN,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'},
-        body:JSON.stringify(body)
-      });
-    }).then(function(r2){ if(r2) return r2.json(); })
-    .then(function(result){
-      if(result && result.content){
-        // 更新本地缓存
-        try {
-          var newData = JSON.parse(atob(result.content.sha ? '' : (result.content.replace ? result.content.replace(/\s/g,'') : '')));
-          if(newData && newData.list) store.set('leader2048', JSON.stringify(newData.list.slice(0,10)));
-        } catch(e){}
+      if(j && j.ok && j.list){
+        store.set('leader2048', JSON.stringify(j.list.slice(0,10)));
       }
     }).catch(function(e){ console.warn('syncToGitHub failed:', e); });
 }
@@ -305,9 +270,7 @@ function renderRank(list, isServer, sha){
   document.getElementById('rankTag').textContent = isServer ? '🌐 全服排行 (实时)' : '📱 本机排行';
 }
 function saveApi(){
-  var v = document.getElementById('apiInput').value.trim();
-  if(v){ store.set('ghToken2048', v); GH_TOKEN = v; }
-  else { store.remove('ghToken2048'); GH_TOKEN = ''; }
+  // Token 功能已移除，改为后端 API 处理
   showRank();
 }
 function closeRank(){ document.getElementById('rankModal').classList.remove('show'); }
