@@ -101,7 +101,7 @@ var store = {
 var size = 4, board = [], score = 0, best = parseInt(store.get('best2048')||'0', 10) || 0;
 var playerName = store.get('playerName') || '';
 var API = store.get('api2048') || '';
-if(!API && location.hostname){ API = location.protocol + '//' + location.hostname + ':8081'; }
+if(!API && location.hostname && location.hostname !== 'localhost'){ API = location.protocol + '//' + location.hostname; }
 var grid = document.getElementById('grid'), cells = [];
 function buildBoard(){
   for(var i=0;i<size*size;i++){ var d=document.createElement('div'); d.className='cell'; grid.appendChild(d); cells.push(d); }
@@ -185,7 +185,7 @@ function check(){
 function failMsg(s){
   if(s <= 2000) return '杂鱼杂鱼';
   if(s <= 5000) return '杂鱼不行啊';
-  if(s <= 7000) return '加劲呢杂鱼酱�;
+  if(s <= 7000) return '加劲呢杂鱼酱';
   if(s <= 10000) return '加把劲呢杂鱼酱';
   return '不行了，你赢了';
 }
